@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>마피아 역할 부여</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 20px; }
+    input, button { padding: 8px; margin: 5px; }
+    #lobby { display: none; } /* 기본은 숨김 */
+    #assignBtn { display: none; }
+    #myRole { font-size: 20px; margin-top: 15px; }
+    #admin { margin-top: 15px; color: darkred; }
+    #authStatus { font-size: 12px; opacity: 0.8; margin-bottom: 10px; }
+    #joinHint { font-size: 12px; opacity: 0.85; margin-top: 6px; }
+    #roleSetup { margin-top: 12px; }
+  </style>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      updateDoc,
+      collection,
+      getDocs,
+      onSnapshot
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+    // ✅ 본인 Firebase 설정으로 교체
+    const firebaseConfig = {
+  apiKey: "AIzaSyBCI97ApSsXtNqUnKTdzEW6bvtaF-bHrgs",
+  authDomain: "role-class.firebaseapp.com",
+  projectId: "role-class",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    let myId = null;
+    let myRoomCode = "";
+    let isHost = false;
+    let roomExists = null; // null(모름) / true(존재) / false(없음)
+
+    function $(id){ return document.getElementById(id); }
+
+    function showJoin() {
+      $("join").style.display = "block";
+      $("lobby").style.display = "none";
+      $("assignBtn").style.display = "none";
+      $("myRole").innerText = "";
+      $("admin").innerHTML = "";
+      $("players").innerHTML = "";
+    }
+
+    function showLobby() {
+      $("join").style.display = "none";
+      $("lobby").style.display = "block";
+    }
+
+    function setAuthStatus(t) { $("authStatus").textContent = t; }
+    function setJoinHint(t) { $("joinHint").textContent = t; }
+
+    function setJoinEnabled(v) { $("joinBtn").disabled = !v; }
+
+    function setRoleSetupVisible(v) {
+      // 방이 "없을 때"만 (새 방 생성/방장일 때) 역할 설정을 보여줌
+      $("roleSetup").style.display = v ? "block" : "none";
+    }
+
+    // ✅ 페이지 시작 시 무조건 "입장 화면"이 먼저 보이게 강제
+    window.addEventListener("DOMContentLoaded", () => {
+      showJoin();
+      setRoleSetupVisible(false); // 방 존재 여부를 모르니 일단 숨김
+      setJoinEnabled(false);
+      setAuthStatus("로그인 중...");
+      setJoinHint("방 코드를 입력하면 새 방인지/기존 방인지 안내해요.");
+    });
+
+    // ✅ 익명 로그인
+    signInAnonymously(auth)
+      .then(() => {
+        myId = auth.currentUser.uid;
+        setAuthStatus("로그인 완료 ✅");
+        setJoinEnabled(true);
+      })
+      .catch((e) => {
+        console.error(e);
+        setAuthStatus("로그인 실패 ❌");
+        alert("익명 로그인 실패: Firebase Authentication에서 익명 로그인을 켰는지 확인하세요.\n" + (e?.message || e));
+      });
+
+    // 역할 설정 읽기
+    function getRolesConfigFromInputs() {
+      const names = document.querySelectorAll(".roleName");
+      const counts = document.querySelectorAll(".roleCount");
+
+      const config = {};
+      names.forEach((n, i) => {
+        const role = n.value.trim();
+        const count = parseInt(counts[i].value, 10);
+        if (role && Number.isFinite(count) && count > 0) config[role] = count;
+      });
+      return config;
+    }
+
+    // module에서 onclick 쓰려면 window에 노출
+    window.addRole = function () {
+      const rolesDiv = $("roles");
+      const div = document.createElement("div");
+      div.innerHTML = `
+        <input placeholder="역할 이름" class="roleName" />
+        <input type="number" min="1" value="1" class="roleCount" />
+      `;
+      rolesDiv.appendChild(div);
+    };
+
+    // ✅ 방 코드 입력 시: 방이 존재하는지 확인 → 역할 설정 UI 표시/숨김
+    let roomCheckTimer = null;
+    window.onRoomCodeInput = function () {
+      const roomCode = $("room").value.trim();
+
+      if (!myId) {
+        setJoinHint("로그인 중입니다...");
+        setRoleSetupVisible(false);
+        return;
+      }
+
+      if (!roomCode) {
+        roomExists = null;
+        setJoinHint("방 코드를 입력하세요.");
+        setRoleSetupVisible(false);
+        return;
+      }
+
+      clearTimeout(roomCheckTimer);
+      roomCheckTimer = setTimeout(async () => {
+        try {
+          const roomRef = doc(db, "rooms", roomCode);
+          const snap = await getDoc(roomRef);
+
+          if (snap.exists()) {
+            roomExists = true;
+            setJoinHint("✅ 기존 방입니다. 역할 설정 없이 입장합니다.");
+            setRoleSetupVisible(false); // 기존 방이면 역할 설정 숨김
+          } else {
+            roomExists = false;
+            setJoinHint("🆕 새 방입니다. 첫 입장자는 방장(역할 설정 필요)입니다.");
+            setRoleSetupVisible(true); // 새 방이면 역할 설정 표시
+          }
+        } catch (e) {
+          console.error("방 존재 확인 오류", e);
+          setJoinHint("방 확인 중 오류가 발생했습니다. 콘솔을 확인하세요.");
+        }
+      }, 250); // 간단 디바운스
+    };
+
+    // 방 입장
+    window.joinRoom = async () => {
+      try {
+        if (!myId) {
+          alert("로그인 중입니다. 잠시 후 다시 시도하세요.");
+          return;
+        }
+
+        const name = $("name").value.trim();
+        const roomCode = $("room").value.trim();
+        if (!name || !roomCode) {
+          alert("이름과 방 코드를 입력하세요.");
+          return;
+        }
+
+        myRoomCode = roomCode;
+
+        const roomRef = doc(db, "rooms", roomCode);
+        const roomSnap = await getDoc(roomRef);
+
+        // 방 생성(방장)
+        if (!roomSnap.exists()) {
+          const rolesConfig = getRolesConfigFromInputs();
+          if (Object.keys(rolesConfig).length === 0) {
+            alert("새 방(방장)은 역할을 하나 이상 설정해야 합니다.");
+            return;
+          }
+
+          await setDoc(roomRef, {
+            hostId: myId,
+            status: "waiting",
+            rolesConfig
+          });
+
+          isHost = true;
+        } else {
+          const roomData = roomSnap.data();
+          isHost = (roomData?.hostId === myId);
+        }
+
+        // 플레이어 문서 생성/갱신
+        const playerRef = doc(db, `rooms/${roomCode}/players`, myId);
+        const playerSnap = await getDoc(playerRef);
+
+        if (!playerSnap.exists()) {
+          await setDoc(playerRef, { name, role: null, isHost });
+        } else {
+          await updateDoc(playerRef, { name }); // role 건드리지 않음
+        }
+
+        // ✅ 이제서야 대기실로 이동
+        showLobby();
+
+        $("hostTag").innerText = isHost ? "👑 방장입니다" : "참가자입니다";
+        $("assignBtn").style.display = isHost ? "inline-block" : "none";
+
+        listenPlayers();
+        listenMyRole();
+      } catch (e) {
+        console.error("joinRoom 에러", e);
+        alert("입장 처리 중 오류:\n" + (e?.code || "") + "\n" + (e?.message || e));
+      }
+    };
+
+    // 플레이어 목록 + 방장 전체 역할 표시
+    function listenPlayers() {
+      const list = $("players");
+      const admin = $("admin");
+      const ref = collection(db, `rooms/${myRoomCode}/players`);
+
+      onSnapshot(ref, (snap) => {
+        list.innerHTML = "";
+        admin.innerHTML = "";
+
+        snap.forEach((d) => {
+          const p = d.data();
+          const li = document.createElement("li");
+          li.innerText = p.name + (p.isHost ? " ⭐" : "");
+          list.appendChild(li);
+
+          if (isHost && p.role) {
+            const r = document.createElement("div");
+            r.innerText = `${p.name} : ${p.role}`;
+            admin.appendChild(r);
+          }
+        });
+      }, (err) => {
+        console.error("listenPlayers 오류", err);
+        alert("플레이어 목록 오류:\n" + (err?.message || err));
+      });
+    }
+
+    // 내 역할만 확인
+    function listenMyRole() {
+      const ref = doc(db, `rooms/${myRoomCode}/players`, myId);
+      onSnapshot(ref, (snap) => {
+        const data = snap.data();
+        if (data?.role) $("myRole").innerText = `🎭 당신의 역할: ${data.role}`;
+      }, (err) => {
+        console.error("listenMyRole 오류", err);
+        alert("내 역할 구독 오류:\n" + (err?.message || err));
+      });
+    }
+
+    // 역할 부여(방장)
+    window.assignRoles = async () => {
+      try {
+        if (!isHost) {
+          alert("방장만 역할을 부여할 수 있습니다.");
+          return;
+        }
+
+        const roomRef = doc(db, "rooms", myRoomCode);
+        const roomSnap = await getDoc(roomRef);
+        const roomData = roomSnap.data() || {};
+
+        const config = roomData.rolesConfig || roomData.roles;
+        if (!config) {
+          alert("역할 설정을 찾지 못했습니다.");
+          return;
+        }
+
+        let roles = [];
+        Object.entries(config).forEach(([role, count]) => {
+          const n = parseInt(count, 10);
+          for (let i = 0; i < n; i++) roles.push(role);
+        });
+
+        const playersSnap = await getDocs(collection(db, `rooms/${myRoomCode}/players`));
+
+        if (roles.length !== playersSnap.size) {
+          alert(`⚠️ 역할 수(${roles.length})와 참가자 수(${playersSnap.size})가 일치하지 않습니다.`);
+          return;
+        }
+
+        shuffle(roles);
+
+        let i = 0;
+        for (const pDoc of playersSnap.docs) {
+          await updateDoc(pDoc.ref, { role: roles[i++] });
+        }
+
+        await updateDoc(roomRef, { status: "assigned" });
+      } catch (e) {
+        console.error("assignRoles 에러", e);
+        alert("역할 부여 중 오류:\n" + (e?.code || "") + "\n" + (e?.message || e));
+      }
+    };
+
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <h1>🕵️ 마피아 역할 부여</h1>
+  <div id="authStatus">로그인 상태</div>
+
+  <!-- ✅ 입장 화면(처음에 무조건 보임) -->
+  <div id="join" style="display:block;">
+    <input id="name" placeholder="이름" />
+    <input id="room" placeholder="방 코드" oninput="onRoomCodeInput()" />
+    <br />
+    <button id="joinBtn" onclick="joinRoom()">입장하기</button>
+    <div id="joinHint"></div>
+
+    <!-- ✅ 새 방일 때만 보여줄 역할 설정 -->
+    <div id="roleSetup" style="display:none;">
+      <h3>🎭 역할 설정 (새 방 생성 시 방장만)</h3>
+      <div id="roles">
+        <div>
+          <input value="마피아" class="roleName" />
+          <input type="number" min="1" value="1" class="roleCount" />
+        </div>
+        <div>
+          <input value="시민" class="roleName" />
+          <input type="number" min="1" value="2" class="roleCount" />
+        </div>
+      </div>
+      <button onclick="addRole()">➕ 역할 추가</button>
+      <div style="font-size:12px;opacity:.8;margin-top:6px;">
+        ※ 역할 인원 합계 = 참가자 수가 되어야 역할 부여가 됩니다.
+      </div>
+    </div>
+  </div>
+
+  <!-- ✅ 대기실(처음엔 무조건 숨김) -->
+  <div id="lobby" style="display:none;">
+    <h2>대기실</h2>
+    <p id="hostTag"></p>
+    <button id="assignBtn" onclick="assignRoles()">🎲 역할 부여</button>
+
+    <ul id="players"></ul>
+    <div id="myRole"></div>
+    <div id="admin"></div>
+  </div>
+</body>
+</html>
