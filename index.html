@@ -2,104 +2,230 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>마피아 역할 부여</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>마피아 역할 부여 (Custom Modal)</title>
 
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; }
-    input, button { padding: 8px; margin: 5px; }
-    #lobby { display: none; } /* 기본은 숨김 */
-    #assignBtn { display: none; }
-    #myRole { font-size: 20px; margin-top: 15px; }
-    #admin { margin-top: 15px; color: darkred; }
-    #authStatus { font-size: 12px; opacity: 0.8; margin-bottom: 10px; }
-    #joinHint { font-size: 12px; opacity: 0.85; margin-top: 6px; }
-    #roleSetup { margin-top: 12px; }
+    body { font-family: system-ui, sans-serif; text-align: center; padding: 20px; background-color: #f9f9f9; }
+    h1 { margin-bottom: 10px; }
+    input, button { padding: 10px; margin: 6px; font-size: 14px; border-radius: 6px; border: 1px solid #ccc; }
+    button { cursor: pointer; transition: background 0.2s; }
+    button:active { transform: scale(0.98); }
+    
+    #lobby { display:none; }
+    #roleSetup { display:none; margin-top: 12px; background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    #hostArea { display:none; margin-top: 10px; padding: 10px; background: #eef4ff; border-radius: 8px; }
+    
+    #authStatus { font-size: 12px; opacity: .8; margin-bottom: 10px; }
+    #hint { font-size: 13px; color: #555; margin-top: 6px; font-weight: bold; }
+    
+    #roomStatus {
+      font-size: 13px; color: #333; margin: 12px auto 0; white-space: pre-line;
+      text-align: left; max-width: 600px;
+      background: #fff; border: 1px solid #ddd; border-radius: 10px; padding: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    ul { list-style:none; padding-left: 0; }
+    li { padding: 5px 0; border-bottom: 1px solid #eee; }
+    
+    #myRole { font-size: 20px; font-weight: bold; margin: 20px 0; padding: 15px; background: #fff8e1; border-radius: 8px; border: 2px solid #ffe082; min-height: 24px;}
+    #adminRoles { margin-top: 12px; color: #7a0000; text-align: left; background: #fff0f0; padding: 10px; border-radius: 8px; }
+    
+    .row { display:flex; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap; }
+    .box { max-width: 600px; margin: 0 auto; }
+    .roleRow { display:flex; gap:8px; justify-content:center; margin: 6px 0; align-items: center; }
+    .roleRow input[type="text"] { width: 120px; }
+    .roleRow input[type="number"] { width: 60px; text-align: center; }
+    
+    .danger { background:#e74c3c; color:white; border:none; }
+    .danger:hover { background:#c0392b; }
+    
+    .primary { background:#3498db; color:white; border:none; }
+    .primary:hover { background:#2980b9; }
+    
+    .ghost { background:#f1f2f6; border:1px solid #dcdde1; color: #333; }
+    .ghost:hover { background:#dfe4ea; }
+    
+    .muted { opacity:.7; font-size: 0.9em; }
+    
+    /* Toast Message */
+    #toast {
+      visibility: hidden; min-width: 250px; background-color: #333; color: #fff;
+      text-align: center; border-radius: 4px; padding: 16px; position: fixed;
+      z-index: 1000; left: 50%; bottom: 30px; transform: translateX(-50%); font-size: 16px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+    #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+    
+    @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+    @keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+
+    /* Custom Modal Styles */
+    .modal-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.5); z-index: 2000;
+      display: none; justify-content: center; align-items: center;
+    }
+    .modal-box {
+      background: white; padding: 25px; border-radius: 12px;
+      max-width: 80%; width: 320px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      text-align: left;
+    }
+    .modal-msg { margin-bottom: 20px; font-size: 16px; line-height: 1.5; color: #333; }
+    .modal-btns { display: flex; justify-content: flex-end; gap: 10px; }
   </style>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import {
       getFirestore,
-      doc,
-      getDoc,
-      setDoc,
-      updateDoc,
-      collection,
-      getDocs,
-      onSnapshot
+      doc, getDoc, setDoc, updateDoc, deleteDoc,
+      collection, getDocs, onSnapshot, writeBatch, query, limit, orderBy
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
     import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-    // ✅ 본인 Firebase 설정으로 교체
+    /* =========================
+       0) Firebase 설정
+    ========================== */
     const firebaseConfig = {
-  apiKey: "AIzaSyBCI97ApSsXtNqUnKTdzEW6bvtaF-bHrgs",
-  authDomain: "role-class.firebaseapp.com",
-  projectId: "role-class",
+      apiKey: "AIzaSyBCI97ApSsXtNqUnKTdzEW6bvtaF-bHrgs",
+      authDomain: "role-class.firebaseapp.com",
+      projectId: "role-class",
     };
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const auth = getAuth(app);
 
+    /* =========================
+       1) 상태 변수
+    ========================== */
     let myId = null;
-    let myRoomCode = "";
+    let myRoom = "";
     let isHost = false;
-    let roomExists = null; // null(모름) / true(존재) / false(없음)
 
-    function $(id){ return document.getElementById(id); }
+    let unsubRoom = null;
+    let unsubRoster = null;
+    let unsubMyPrivate = null;
+    let unsubHostPrivate = null;
 
-    function showJoin() {
-      $("join").style.display = "block";
-      $("lobby").style.display = "none";
-      $("assignBtn").style.display = "none";
-      $("myRole").innerText = "";
-      $("admin").innerHTML = "";
-      $("players").innerHTML = "";
+    const $ = (id) => document.getElementById(id);
+
+    // Toast
+    function showToast(msg) {
+      const x = $("toast");
+      if(x) {
+          x.textContent = msg;
+          x.className = "show";
+          setTimeout(function(){ x.className = x.className.replace("show", ""); }, 3000);
+      }
+      console.log(`[TOAST] ${msg}`);
     }
 
-    function showLobby() {
+    // Custom Modal Function (Replaces alert/confirm)
+    function openModal(msg, isConfirm = false) {
+      return new Promise((resolve) => {
+        const overlay = $("modalOverlay");
+        const msgEl = $("modalMsg");
+        const okBtn = $("modalOkBtn");
+        const cancelBtn = $("modalCancelBtn");
+
+        msgEl.textContent = msg;
+        overlay.style.display = "flex";
+        
+        cancelBtn.style.display = isConfirm ? "block" : "none";
+        
+        // Remove old listeners (cloning node is a quick hack to wipe listeners)
+        const newOk = okBtn.cloneNode(true);
+        okBtn.parentNode.replaceChild(newOk, okBtn);
+        
+        const newCancel = cancelBtn.cloneNode(true);
+        cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+
+        newOk.onclick = () => {
+          overlay.style.display = "none";
+          resolve(true);
+        };
+        
+        newCancel.onclick = () => {
+          overlay.style.display = "none";
+          resolve(false);
+        };
+      });
+    }
+
+    async function showAlert(msg) {
+      await openModal(msg, false);
+    }
+
+    async function showConfirm(msg) {
+      return await openModal(msg, true);
+    }
+
+    function setStatus(text) {
+      if($("roomStatus")) $("roomStatus").textContent = text || "";
+    }
+
+    function stopAllListeners() {
+      if (unsubRoom) { unsubRoom(); unsubRoom = null; }
+      if (unsubRoster) { unsubRoster(); unsubRoster = null; }
+      if (unsubMyPrivate) { unsubMyPrivate(); unsubMyPrivate = null; }
+      if (unsubHostPrivate) { unsubHostPrivate(); unsubHostPrivate = null; }
+    }
+
+    function setBusy(busy) {
+      const btns = ["joinBtn", "leaveBtn", "assignBtn", "resetBtn", "addRoleBtn"];
+      btns.forEach(id => {
+        const el = $(id);
+        if(el) el.disabled = busy;
+      });
+      // 로그인 전이면 joinBtn은 계속 비활성일 수 있음
+      if (!myId && $("joinBtn")) $("joinBtn").disabled = true;
+      
+      const inputs = ["roomInput", "nameInput"];
+      inputs.forEach(id => {
+        const el = $(id);
+        if(el) el.disabled = busy;
+      });
+    }
+
+    function showJoinScreen() {
+      $("join").style.display = "block";
+      $("lobby").style.display = "none";
+      $("roleSetup").style.display = "none";
+      $("hostArea").style.display = "none";
+
+      $("players").innerHTML = "";
+      $("adminRoles").innerHTML = "";
+      $("myRole").textContent = "";
+      $("hostTag").textContent = "";
+      $("hint").textContent = "방 코드를 입력하면 새 방인지/기존 방인지 안내합니다.";
+      setStatus("");
+    }
+
+    function showLobbyScreen() {
       $("join").style.display = "none";
       $("lobby").style.display = "block";
     }
 
-    function setAuthStatus(t) { $("authStatus").textContent = t; }
-    function setJoinHint(t) { $("joinHint").textContent = t; }
-
-    function setJoinEnabled(v) { $("joinBtn").disabled = !v; }
-
-    function setRoleSetupVisible(v) {
-      // 방이 "없을 때"만 (새 방 생성/방장일 때) 역할 설정을 보여줌
-      $("roleSetup").style.display = v ? "block" : "none";
+    /* =========================
+       2) 유틸: 타임아웃 래퍼
+    ========================== */
+    function withTimeout(promise, ms, label) {
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms);
+        promise.then((v) => { clearTimeout(t); resolve(v); })
+               .catch((e) => { clearTimeout(t); reject(e); });
+      });
     }
 
-    // ✅ 페이지 시작 시 무조건 "입장 화면"이 먼저 보이게 강제
-    window.addEventListener("DOMContentLoaded", () => {
-      showJoin();
-      setRoleSetupVisible(false); // 방 존재 여부를 모르니 일단 숨김
-      setJoinEnabled(false);
-      setAuthStatus("로그인 중...");
-      setJoinHint("방 코드를 입력하면 새 방인지/기존 방인지 안내해요.");
-    });
-
-    // ✅ 익명 로그인
-    signInAnonymously(auth)
-      .then(() => {
-        myId = auth.currentUser.uid;
-        setAuthStatus("로그인 완료 ✅");
-        setJoinEnabled(true);
-      })
-      .catch((e) => {
-        console.error(e);
-        setAuthStatus("로그인 실패 ❌");
-        alert("익명 로그인 실패: Firebase Authentication에서 익명 로그인을 켰는지 확인하세요.\n" + (e?.message || e));
-      });
-
-    // 역할 설정 읽기
-    function getRolesConfigFromInputs() {
+    /* =========================
+       3) 역할 설정 UI
+    ========================== */
+    function getRolesConfigFromUI() {
       const names = document.querySelectorAll(".roleName");
       const counts = document.querySelectorAll(".roleCount");
-
       const config = {};
       names.forEach((n, i) => {
         const role = n.value.trim();
@@ -109,205 +235,17 @@
       return config;
     }
 
-    // module에서 onclick 쓰려면 window에 노출
-    window.addRole = function () {
-      const rolesDiv = $("roles");
+    function addRoleRow() {
       const div = document.createElement("div");
+      div.className = "roleRow";
       div.innerHTML = `
-        <input placeholder="역할 이름" class="roleName" />
-        <input type="number" min="1" value="1" class="roleCount" />
+        <input class="roleName" type="text" placeholder="역할 이름"/>
+        <input class="roleCount" type="number" min="1" value="1"/>
+        <button class="ghost removeRoleBtn" type="button">🗑️</button>
       `;
-      rolesDiv.appendChild(div);
-    };
-
-    // ✅ 방 코드 입력 시: 방이 존재하는지 확인 → 역할 설정 UI 표시/숨김
-    let roomCheckTimer = null;
-    window.onRoomCodeInput = function () {
-      const roomCode = $("room").value.trim();
-
-      if (!myId) {
-        setJoinHint("로그인 중입니다...");
-        setRoleSetupVisible(false);
-        return;
-      }
-
-      if (!roomCode) {
-        roomExists = null;
-        setJoinHint("방 코드를 입력하세요.");
-        setRoleSetupVisible(false);
-        return;
-      }
-
-      clearTimeout(roomCheckTimer);
-      roomCheckTimer = setTimeout(async () => {
-        try {
-          const roomRef = doc(db, "rooms", roomCode);
-          const snap = await getDoc(roomRef);
-
-          if (snap.exists()) {
-            roomExists = true;
-            setJoinHint("✅ 기존 방입니다. 역할 설정 없이 입장합니다.");
-            setRoleSetupVisible(false); // 기존 방이면 역할 설정 숨김
-          } else {
-            roomExists = false;
-            setJoinHint("🆕 새 방입니다. 첫 입장자는 방장(역할 설정 필요)입니다.");
-            setRoleSetupVisible(true); // 새 방이면 역할 설정 표시
-          }
-        } catch (e) {
-          console.error("방 존재 확인 오류", e);
-          setJoinHint("방 확인 중 오류가 발생했습니다. 콘솔을 확인하세요.");
-        }
-      }, 250); // 간단 디바운스
-    };
-
-    // 방 입장
-    window.joinRoom = async () => {
-      try {
-        if (!myId) {
-          alert("로그인 중입니다. 잠시 후 다시 시도하세요.");
-          return;
-        }
-
-        const name = $("name").value.trim();
-        const roomCode = $("room").value.trim();
-        if (!name || !roomCode) {
-          alert("이름과 방 코드를 입력하세요.");
-          return;
-        }
-
-        myRoomCode = roomCode;
-
-        const roomRef = doc(db, "rooms", roomCode);
-        const roomSnap = await getDoc(roomRef);
-
-        // 방 생성(방장)
-        if (!roomSnap.exists()) {
-          const rolesConfig = getRolesConfigFromInputs();
-          if (Object.keys(rolesConfig).length === 0) {
-            alert("새 방(방장)은 역할을 하나 이상 설정해야 합니다.");
-            return;
-          }
-
-          await setDoc(roomRef, {
-            hostId: myId,
-            status: "waiting",
-            rolesConfig
-          });
-
-          isHost = true;
-        } else {
-          const roomData = roomSnap.data();
-          isHost = (roomData?.hostId === myId);
-        }
-
-        // 플레이어 문서 생성/갱신
-        const playerRef = doc(db, `rooms/${roomCode}/players`, myId);
-        const playerSnap = await getDoc(playerRef);
-
-        if (!playerSnap.exists()) {
-          await setDoc(playerRef, { name, role: null, isHost });
-        } else {
-          await updateDoc(playerRef, { name }); // role 건드리지 않음
-        }
-
-        // ✅ 이제서야 대기실로 이동
-        showLobby();
-
-        $("hostTag").innerText = isHost ? "👑 방장입니다" : "참가자입니다";
-        $("assignBtn").style.display = isHost ? "inline-block" : "none";
-
-        listenPlayers();
-        listenMyRole();
-      } catch (e) {
-        console.error("joinRoom 에러", e);
-        alert("입장 처리 중 오류:\n" + (e?.code || "") + "\n" + (e?.message || e));
-      }
-    };
-
-    // 플레이어 목록 + 방장 전체 역할 표시
-    function listenPlayers() {
-      const list = $("players");
-      const admin = $("admin");
-      const ref = collection(db, `rooms/${myRoomCode}/players`);
-
-      onSnapshot(ref, (snap) => {
-        list.innerHTML = "";
-        admin.innerHTML = "";
-
-        snap.forEach((d) => {
-          const p = d.data();
-          const li = document.createElement("li");
-          li.innerText = p.name + (p.isHost ? " ⭐" : "");
-          list.appendChild(li);
-
-          if (isHost && p.role) {
-            const r = document.createElement("div");
-            r.innerText = `${p.name} : ${p.role}`;
-            admin.appendChild(r);
-          }
-        });
-      }, (err) => {
-        console.error("listenPlayers 오류", err);
-        alert("플레이어 목록 오류:\n" + (err?.message || err));
-      });
+      div.querySelector(".removeRoleBtn").addEventListener("click", () => div.remove());
+      $("roles").appendChild(div);
     }
-
-    // 내 역할만 확인
-    function listenMyRole() {
-      const ref = doc(db, `rooms/${myRoomCode}/players`, myId);
-      onSnapshot(ref, (snap) => {
-        const data = snap.data();
-        if (data?.role) $("myRole").innerText = `🎭 당신의 역할: ${data.role}`;
-      }, (err) => {
-        console.error("listenMyRole 오류", err);
-        alert("내 역할 구독 오류:\n" + (err?.message || err));
-      });
-    }
-
-    // 역할 부여(방장)
-    window.assignRoles = async () => {
-      try {
-        if (!isHost) {
-          alert("방장만 역할을 부여할 수 있습니다.");
-          return;
-        }
-
-        const roomRef = doc(db, "rooms", myRoomCode);
-        const roomSnap = await getDoc(roomRef);
-        const roomData = roomSnap.data() || {};
-
-        const config = roomData.rolesConfig || roomData.roles;
-        if (!config) {
-          alert("역할 설정을 찾지 못했습니다.");
-          return;
-        }
-
-        let roles = [];
-        Object.entries(config).forEach(([role, count]) => {
-          const n = parseInt(count, 10);
-          for (let i = 0; i < n; i++) roles.push(role);
-        });
-
-        const playersSnap = await getDocs(collection(db, `rooms/${myRoomCode}/players`));
-
-        if (roles.length !== playersSnap.size) {
-          alert(`⚠️ 역할 수(${roles.length})와 참가자 수(${playersSnap.size})가 일치하지 않습니다.`);
-          return;
-        }
-
-        shuffle(roles);
-
-        let i = 0;
-        for (const pDoc of playersSnap.docs) {
-          await updateDoc(pDoc.ref, { role: roles[i++] });
-        }
-
-        await updateDoc(roomRef, { status: "assigned" });
-      } catch (e) {
-        console.error("assignRoles 에러", e);
-        alert("역할 부여 중 오류:\n" + (e?.code || "") + "\n" + (e?.message || e));
-      }
-    };
 
     function shuffle(arr) {
       for (let i = arr.length - 1; i > 0; i--) {
@@ -315,50 +253,472 @@
         [arr[i], arr[j]] = [arr[j], arr[i]];
       }
     }
+
+    /* =========================
+       4) 방 존재 확인
+    ========================== */
+    let roomCheckTimer = null;
+    async function onRoomInputChange() {
+      const code = $("roomInput").value.trim();
+      if (!myId) {
+        $("hint").textContent = "로그인 중...";
+        $("roleSetup").style.display = "none";
+        return;
+      }
+      if (!code) {
+        $("hint").textContent = "방 코드를 입력하세요.";
+        $("roleSetup").style.display = "none";
+        return;
+      }
+
+      clearTimeout(roomCheckTimer);
+      roomCheckTimer = setTimeout(async () => {
+        try {
+          const snap = await withTimeout(getDoc(doc(db, "rooms", code)), 4000, "checkRoom");
+          if (snap.exists()) {
+            $("hint").textContent = "✅ 기존 방입니다. 참가자로 입장합니다.";
+            $("roleSetup").style.display = "none";
+          } else {
+            $("hint").textContent = "🆕 새 방입니다. (방장 - 역할 설정 필요)";
+            $("roleSetup").style.display = "block";
+          }
+        } catch (e) {
+          console.error(e);
+          $("hint").textContent = "방 확인 오류(콘솔 확인)";
+          $("roleSetup").style.display = "none";
+        }
+      }, 250);
+    }
+
+    /* =========================
+       5) Firestore 경로
+    ========================== */
+    const roomRef = (code) => doc(db, "rooms", code);
+    const rosterRef = (code, uid) => doc(db, `rooms/${code}/roster/${uid}`);
+    const privateRef = (code, uid) => doc(db, `rooms/${code}/privatePlayers/${uid}`);
+
+    /* =========================
+       6) 입장 (Join)
+    ========================== */
+    async function joinRoom() {
+      console.log(">> joinRoom clicked");
+      const name = $("nameInput").value.trim();
+      const code = $("roomInput").value.trim();
+      if (!name || !code) { await showAlert("이름과 방 코드를 입력하세요."); return; }
+      if (!myId) { await showAlert("로그인 중입니다. 잠시 후 다시 시도하세요."); return; }
+
+      setBusy(true);
+      stopAllListeners();
+      myRoom = code;
+      isHost = false;
+
+      try {
+        const rRef = roomRef(code);
+        const rSnap = await withTimeout(getDoc(rRef), 6000, "getRoom");
+
+        // 1) 방 생성 + 내가 방장
+        if (!rSnap.exists()) {
+          const rolesConfig = getRolesConfigFromUI();
+          if (Object.keys(rolesConfig).length === 0) {
+            throw new Error("새 방은 역할을 하나 이상 설정해야 합니다.");
+          }
+          await withTimeout(setDoc(rRef, {
+            hostId: myId,
+            status: "waiting", // waiting | assigned
+            rolesConfig,
+            createdAt: Date.now()
+          }), 6000, "createRoom");
+          isHost = true;
+        } else {
+          const data = rSnap.data() || {};
+          isHost = (data.hostId === myId);
+        }
+
+        // 2) roster(공개 목록) 등록
+        await withTimeout(setDoc(rosterRef(code, myId), {
+          name,
+          isHost,
+          joinedAt: Date.now()
+        }, { merge: true }), 6000, "upsertRoster");
+
+        // 3) privatePlayers(비공개 역할) 등록
+        const pRef = privateRef(code, myId);
+        const pSnap = await withTimeout(getDoc(pRef), 6000, "getPrivateMe");
+        
+        if (!pSnap.exists()) {
+          await withTimeout(setDoc(pRef, {
+            name,
+            role: null,
+            isHost
+          }), 6000, "createPrivateMe");
+        } else {
+          await withTimeout(updateDoc(pRef, { name, isHost }), 6000, "updatePrivateMe");
+        }
+
+        // UI 전환 및 리스너
+        showLobbyScreen();
+        listenRoomDoc();
+        listenRoster();
+        listenMyRole();
+        if (isHost) listenAllRolesForHost();
+
+      } catch (e) {
+        console.error("Join Error:", e);
+        await showAlert("입장 실패:\n" + (e?.message || e));
+        myRoom = "";
+        isHost = false;
+        showJoinScreen();
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    /* =========================
+       7) 리스너들
+    ========================== */
+    function listenRoomDoc() {
+      unsubRoom = onSnapshot(roomRef(myRoom), async (snap) => {
+        if (!snap.exists()) {
+          console.log("Room deleted");
+          stopAllListeners();
+          await showAlert(`방이 종료되었습니다.`);
+          myRoom = "";
+          isHost = false;
+          showJoinScreen();
+          return;
+        }
+
+        const data = snap.data() || {};
+        const wasHost = isHost;
+        isHost = (data.hostId === myId);
+
+        // 방장이 바뀌었으면 UI 갱신
+        if (!wasHost && isHost) {
+            showToast("👑 당신이 이제 방장입니다!");
+            listenAllRolesForHost();
+        }
+
+        $("hostTag").textContent = isHost ? "👑 당신은 방장입니다" : "🙂 당신은 참가자입니다";
+        $("hostArea").style.display = isHost ? "block" : "none";
+
+        let statusText = `방 상태: ${data.status === 'assigned' ? '게임 진행 중' : '대기 중'}`;
+        if(isHost) statusText += " (참가자가 다 모이면 '역할 부여'를 누르세요)";
+        setStatus(statusText);
+
+      }, (err) => {
+        console.error("Room listen error:", err);
+      });
+    }
+
+    function listenRoster() {
+      const q = query(collection(db, `rooms/${myRoom}/roster`));
+      unsubRoster = onSnapshot(q, (snap) => {
+        const list = [];
+        snap.forEach(d => list.push(d.data()));
+        list.sort((a,b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+        $("players").innerHTML = "";
+        list.forEach((p) => {
+          const li = document.createElement("li");
+          li.textContent = p.name;
+          if (p.isHost) li.innerHTML += " 👑";
+          $("players").appendChild(li);
+        });
+      });
+    }
+
+    function listenMyRole() {
+      unsubMyPrivate = onSnapshot(privateRef(myRoom, myId), (snap) => {
+        const data = snap.data() || {};
+        if (data.role) {
+            $("myRole").textContent = `🎭 당신의 역할: ${data.role}`;
+            $("myRole").style.background = "#fff8e1";
+        } else {
+            $("myRole").textContent = "준비 중... (방장이 역할을 부여하면 여기에 표시됩니다)";
+            $("myRole").style.background = "#eee";
+        }
+      });
+    }
+
+    function listenAllRolesForHost() {
+      if (unsubHostPrivate) unsubHostPrivate();
+      
+      unsubHostPrivate = onSnapshot(collection(db, `rooms/${myRoom}/privatePlayers`), (snap) => {
+        const container = $("adminRoles");
+        container.innerHTML = "<h4>📋 전체 역할 (방장만 보임)</h4>";
+        
+        let hasRoles = false;
+        snap.forEach((d) => {
+          const p = d.data() || {};
+          if (p.role) {
+            hasRoles = true;
+            const div = document.createElement("div");
+            div.style.borderBottom = "1px solid #ffcccc";
+            div.style.padding = "4px 0";
+            div.innerHTML = `<b>${p.name}</b> : ${p.role}`;
+            container.appendChild(div);
+          }
+        });
+
+        if (!hasRoles) {
+            container.innerHTML += "<div class='muted'>아직 역할이 부여되지 않았습니다.</div>";
+        }
+      }, (err) => {
+          console.log("Host role listen error (expected if not host):", err);
+      });
+    }
+
+    /* =========================
+       8) 역할 부여 (방장)
+    ========================== */
+    async function assignRoles() {
+      console.log(">> assignRoles clicked");
+      if (!isHost) { await showAlert("방장만 가능합니다."); return; }
+      
+      setBusy(true);
+      try {
+        const rSnap = await getDoc(roomRef(myRoom));
+        const config = rSnap.data().rolesConfig;
+
+        const playersSnap = await getDocs(collection(db, `rooms/${myRoom}/privatePlayers`));
+        
+        const roles = [];
+        Object.entries(config).forEach(([role, count]) => {
+          for (let i = 0; i < count; i++) roles.push(role);
+        });
+
+        if (roles.length !== playersSnap.size) {
+           throw new Error(`설정된 역할 수(${roles.length}명)와 현재 참가자 수(${playersSnap.size}명)가 다릅니다.`);
+        }
+
+        shuffle(roles);
+
+        const batch = writeBatch(db);
+        let i = 0;
+        playersSnap.forEach((docSnap) => {
+          batch.update(docSnap.ref, { role: roles[i++] });
+        });
+        batch.update(roomRef(myRoom), { status: "assigned" });
+
+        await batch.commit();
+        showToast("✅ 역할 배정이 완료되었습니다!");
+      } catch (e) {
+        console.error(e);
+        await showAlert("오류 발생: " + e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    /* =========================
+       9) 리셋 (방장)
+    ========================== */
+    async function resetRoom() {
+      console.log(">> resetRoom clicked");
+      if (!isHost) { await showAlert("방장만 가능합니다."); return; }
+      
+      const ok = await showConfirm("게임을 초기화하시겠습니까? (모든 역할이 사라집니다)");
+      if (!ok) return;
+
+      setBusy(true);
+      try {
+        const playersSnap = await getDocs(collection(db, `rooms/${myRoom}/privatePlayers`));
+        const batch = writeBatch(db);
+
+        // 모든 플레이어의 role 필드를 null로 변경
+        playersSnap.forEach((docSnap) => {
+          batch.update(docSnap.ref, { role: null });
+        });
+        
+        // 방 상태를 대기로 변경
+        batch.update(roomRef(myRoom), { status: "waiting" });
+
+        await batch.commit();
+        showToast("🔄 게임이 리셋되었습니다.");
+        
+        // 화면 즉시 반영 (혹시 리스너가 느릴 경우를 대비)
+        setStatus("방 상태: 대기 중 (참가자가 다 모이면 '역할 부여'를 누르세요)");
+        
+      } catch (e) {
+        console.error("Reset Failed:", e);
+        await showAlert("리셋 실패: " + e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    /* =========================
+       10) 나가기
+    ========================== */
+    async function deleteCollectionInChunks(colPath) {
+      try {
+        const qy = query(collection(db, colPath), limit(50));
+        const snap = await getDocs(qy);
+        if (snap.empty) return;
+        
+        const batch = writeBatch(db);
+        snap.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        
+        if (snap.size >= 50) await deleteCollectionInChunks(colPath);
+      } catch (e) {
+        console.warn(`Cleanup failed for ${colPath}:`, e);
+      }
+    }
+
+    async function leaveRoom() {
+      console.log(">> leaveRoom clicked");
+      if (!myRoom) return;
+
+      const msg = isHost 
+        ? "방장이 나가면 방이 완전히 삭제됩니다. 계속하시겠습니까?" 
+        : "정말 방을 나가시겠습니까?";
+      
+      const ok = await showConfirm(msg);
+      if (!ok) return;
+
+      setBusy(true);
+      try {
+        if (isHost) {
+            console.log("Host leaving -> Destroying room");
+            await deleteCollectionInChunks(`rooms/${myRoom}/roster`);
+            await deleteCollectionInChunks(`rooms/${myRoom}/privatePlayers`);
+            await deleteDoc(roomRef(myRoom));
+        } else {
+            console.log("Guest leaving -> Deleting self");
+            const batch = writeBatch(db);
+            batch.delete(rosterRef(myRoom, myId));
+            batch.delete(privateRef(myRoom, myId));
+            await batch.commit();
+        }
+
+        console.log("Leave successful");
+        stopAllListeners();
+        myRoom = "";
+        isHost = false;
+        showJoinScreen();
+        showToast("방에서 나왔습니다.");
+
+      } catch (e) {
+        console.error("나가기 오류", e);
+        await showAlert("나가기 처리 중 오류가 발생했습니다: " + e.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    /* =========================
+       11) 초기화
+    ========================== */
+    document.addEventListener("DOMContentLoaded", async () => {
+      showJoinScreen();
+      setBusy(true);
+      $("authStatus").textContent = "로그인 시도 중...";
+
+      $("roomInput").addEventListener("input", onRoomInputChange);
+      $("joinBtn").addEventListener("click", joinRoom);
+      $("leaveBtn").addEventListener("click", leaveRoom);
+      $("assignBtn").addEventListener("click", assignRoles);
+      $("resetBtn").addEventListener("click", resetRoom);
+      $("addRoleBtn").addEventListener("click", addRoleRow);
+
+      document.querySelectorAll(".removeRoleBtn").forEach((btn) => {
+        btn.addEventListener("click", () => btn.closest(".roleRow")?.remove());
+      });
+
+      try {
+        await signInAnonymously(auth);
+        myId = auth.currentUser.uid;
+        console.log("Logged in as:", myId);
+        $("authStatus").textContent = `로그인 완료 (UID: ${myId.slice(0,5)}..)`;
+      } catch (e) {
+        console.error(e);
+        $("authStatus").textContent = "로그인 실패. Firebase 설정을 확인하세요.";
+      } finally {
+        setBusy(false);
+      }
+    });
   </script>
 </head>
 
 <body>
-  <h1>🕵️ 마피아 역할 부여</h1>
-  <div id="authStatus">로그인 상태</div>
+  <div id="toast"></div>
 
-  <!-- ✅ 입장 화면(처음에 무조건 보임) -->
-  <div id="join" style="display:block;">
-    <input id="name" placeholder="이름" />
-    <input id="room" placeholder="방 코드" oninput="onRoomCodeInput()" />
-    <br />
-    <button id="joinBtn" onclick="joinRoom()">입장하기</button>
-    <div id="joinHint"></div>
-
-    <!-- ✅ 새 방일 때만 보여줄 역할 설정 -->
-    <div id="roleSetup" style="display:none;">
-      <h3>🎭 역할 설정 (새 방 생성 시 방장만)</h3>
-      <div id="roles">
-        <div>
-          <input value="마피아" class="roleName" />
-          <input type="number" min="1" value="1" class="roleCount" />
-        </div>
-        <div>
-          <input value="시민" class="roleName" />
-          <input type="number" min="1" value="2" class="roleCount" />
-        </div>
-      </div>
-      <button onclick="addRole()">➕ 역할 추가</button>
-      <div style="font-size:12px;opacity:.8;margin-top:6px;">
-        ※ 역할 인원 합계 = 참가자 수가 되어야 역할 부여가 됩니다.
+  <!-- Custom Modal HTML -->
+  <div id="modalOverlay" class="modal-overlay">
+    <div class="modal-box">
+      <div id="modalMsg" class="modal-msg"></div>
+      <div class="modal-btns">
+        <button id="modalCancelBtn" class="ghost">취소</button>
+        <button id="modalOkBtn" class="primary">확인</button>
       </div>
     </div>
   </div>
 
-  <!-- ✅ 대기실(처음엔 무조건 숨김) -->
-  <div id="lobby" style="display:none;">
-    <h2>대기실</h2>
-    <p id="hostTag"></p>
-    <button id="assignBtn" onclick="assignRoles()">🎲 역할 부여</button>
+  <h1>🕵️ 마피아 역할 부여</h1>
+  <div id="authStatus" class="muted"></div>
 
+  <!-- JOIN SCREEN -->
+  <div id="join" class="box">
+    <div class="row">
+      <input id="nameInput" placeholder="닉네임 입력" maxlength="10" />
+      <input id="roomInput" placeholder="방 코드 (예: 1234)" maxlength="10" />
+    </div>
+    <div class="row">
+      <button id="joinBtn" class="primary" style="width:100px;">입장</button>
+    </div>
+
+    <div id="hint"></div>
+
+    <!-- ROLE SETUP (Only visible for new rooms) -->
+    <div id="roleSetup" class="box">
+      <h3>🎭 역할 설정 (방장)</h3>
+      <p class="muted" style="margin-bottom:10px;">참가자 수에 맞춰 역할을 설정해주세요.</p>
+      
+      <div id="roles">
+        <div class="roleRow">
+          <input class="roleName" type="text" value="마피아"/>
+          <input class="roleCount" type="number" min="1" value="1"/>
+          <button class="ghost removeRoleBtn" type="button">🗑️</button>
+        </div>
+        <div class="roleRow">
+          <input class="roleName" type="text" value="시민"/>
+          <input class="roleCount" type="number" min="1" value="2"/>
+          <button class="ghost removeRoleBtn" type="button">🗑️</button>
+        </div>
+      </div>
+      
+      <button id="addRoleBtn" class="ghost" type="button" style="margin-top:10px; width:100%;">➕ 역할 추가</button>
+    </div>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="lobby" class="box">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <h2 style="margin:0;">게임 대기실</h2>
+      <button id="leaveBtn" class="danger" style="font-size:12px; padding:6px 12px;">🚪 나가기</button>
+    </div>
+    
+    <p id="hostTag" style="font-weight:bold; color:#2980b9;"></p>
+
+    <!-- Host Controls -->
+    <div id="hostArea">
+      <button id="assignBtn" class="primary">🎲 역할 랜덤 부여</button>
+      <button id="resetBtn" class="ghost">🔄 리셋</button>
+    </div>
+
+    <div id="roomStatus"></div>
+
+    <h3 style="margin-top:20px; text-align:left; border-bottom:2px solid #eee; padding-bottom:5px;">
+      👥 참가자 목록
+    </h3>
     <ul id="players"></ul>
+
+    <!-- My Role Display -->
     <div id="myRole"></div>
-    <div id="admin"></div>
+    
+    <!-- Admin View -->
+    <div id="adminRoles"></div>
   </div>
 </body>
 </html>
